@@ -1,0 +1,4 @@
+name = "AffyCelFiles"
+uuid = "efc83544-1c47-49f8-8867-17a7f6cc0942"
+authors = ["Oliver Heil <git@heilbit.de>"]
+version = "0.1.0"
