@@ -187,22 +187,44 @@ function cel_read_generic(io::IO)
             dataSetColumns=Dict{Int,AbstractArray}()
             buffer=zeros(UInt8,nRows*rowSize)
             readbytes!(io,buffer,nRows*rowSize)
-            permBuffer=PermutedDimsArray(reshape(buffer,(rowSize,nRows)),(2,1))
-            startColIndex=0
-            endColIndex=0
+            #permBuffer=PermutedDimsArray(reshape(buffer,(rowSize,nRows)),(2,1))
+            #startColIndex=0
+            #endColIndex=0
+            #for i in 1:nColumns
+            #    startColIndex=endColIndex+1
+            #    endColIndex=startColIndex+colTypeSizes[i]-1
+            #    if colTypeCodes[i] <= 6
+            #        column=map( row -> reinterpret(colTypes[i],reverse(row[startColIndex:endColIndex]))[1], eachrow(permBuffer))
+            #    elseif colTypeCodes[i] == 7 || colTypeCodes[i] == 8
+            #        @warn "type string not implemented"
+            #        column=Array{String}(undef,0)
+            #    else
+            #        @error "unknown type code, code="*string(colTypeCodes[i])
+            #        column=Array{String}(undef,0)
+            #    end
+            #    dataSetColumns[i]=column
+            #end
             for i in 1:nColumns
-                startColIndex=endColIndex+1
-                endColIndex=startColIndex+colTypeSizes[i]-1
                 if colTypeCodes[i] <= 6
-                    column=map( row -> reinterpret(colTypes[i],reverse(row[startColIndex:endColIndex]))[1], eachrow(permBuffer))
-                elseif colTypeCodes[i] == 7
-
-                elseif colTypeCodes[i] == 8
-
+                    dataSetColumns[i]=Array{colTypes[i]}(undef,nRows)
+                elseif colTypeCodes[i] == 7 || colTypeCodes[i] == 8
+                    @warn "type string not implemented"
+                    column=Array{String}(undef,0)
                 else
                     @error "unknown type code, code="*string(colTypeCodes[i])
+                    column=Array{String}(undef,0)
                 end
-                dataSetColumns[i]=column
+            end
+            for j in 1:nRows
+                startColIndex=(j-1)*rowSize
+                endColIndex=startColIndex
+                for i in 1:nColumns
+                    startColIndex=endColIndex+1
+                    endColIndex=startColIndex+colTypeSizes[i]-1
+                    if colTypeCodes[i] <= 6
+                        dataSetColumns[i][j]=reinterpret(colTypes[i],reverse(buffer[startColIndex:endColIndex]))[1]
+                    end
+                end   
             end
             dataSets[dataSetsIndex]=DataSet(true,dataSetName,nParameters,names,rawvalues,values,types,colNames,colTypeCodes,colTypeSizes,colTypes,dataSetColumns)
             dataSetsIndex+=1
