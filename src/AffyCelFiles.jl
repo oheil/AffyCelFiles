@@ -28,9 +28,35 @@ struct DataHeader
     end
 end
 
+struct DataSet
+    isDefined::Bool
+    dataSetName::String
+    nParameters::Int
+    parameterNames::Array{String,1}
+    parameterRawvalues::Array{String,1}
+    parameterValues::Array{String,1}
+    parameterTypes::Array{String,1}
+    dataSetColNames::Array{String,1}
+    dataSetColTypeCodes::Array{Int8,1}
+    dataSetColTypeSizes::Array{Int32,1}
+    dataSetColTypes::Array{Type,1}
+    dataSetColumns::Dict{Int,AbstractArray}
+    function DataSet(isDefined=false)
+        new(
+            isDefined
+        )
+    end
+    function DataSet(args...)
+        new(
+            args...
+        )
+    end
+end
+
 struct DataGroup
     isDefined::Bool
-    test::Int
+    nDataSets::Int
+    dataSets::Array{DataSet,1}
     function DataGroup(isDefined=false)
         new(
             isDefined
@@ -106,18 +132,112 @@ function cel_read_generic(io::IO)
     #println(position(io))
 
     if firstGroupPos != position(io)
-        @warn "current io position is "*string(position(io))*", should be "*string(firstGroupPos)*", performing seek to "*string(firstGroupPos)
+        @warn "current io position is "*string(position(io))*", should be first data group at "*string(firstGroupPos)*", performing seek to "*string(firstGroupPos)
         seek(io,firstGroupPos)
     end
 
     dataGroups=Array{DataGroup}(undef,nGroups)
-    nextGroupPos = firstGroupPos
-    while nextGroupPos > 0
+    dataGroupsIndex=1
+    nextGroupPos=firstGroupPos
+    while nextGroupPos > 0 && dataGroupsIndex <= nGroups
         nextGroupPos=ntoh(read(io,UInt32))
+        nextDataSet=ntoh(read(io,UInt32))
+        nDataSets=ntoh(read(io,Int32))
+        groupName=read_wstring(io)
+        dataSets=Array{DataSet}(undef,nDataSets)
+        dataSetsIndex=1
+        while dataSetsIndex <= nDataSets
+            if nextDataSet != position(io)
+                #@warn "current io position is "*string(position(io))*", should be next dataset at "*string(nextDataSet)*", performing seek to "*string(nextDataSet)
+                seek(io,nextDataSet)
+            end
+            dataElementPos=ntoh(read(io,UInt32))
+            nextDataSet=ntoh(read(io,UInt32))
+            dataSetName=read_wstring(io)
+            nParameters=ntoh(read(io,Int32))
+            names=Array{String}(undef,nParameters)
+            rawvalues=Array{String}(undef,nParameters)
+            values=Array{String}(undef,nParameters)
+            types=Array{String}(undef,nParameters)
+            for i in 1:nParameters
+                names[i]=read_wstring(io)
+                rawvalues[i]=read_value(io)
+                types[i]=read_wstring(io)
+                values[i]=calvin_convert(rawvalues[i], Val(Symbol(types[i])) )
+            end
+            nColumns=ntoh(read(io,UInt32))
+            colNames=Array{String}(undef,nColumns)
+            colTypeCodes=Array{Int8}(undef,nColumns)
+            colTypeSizes=Array{Int32}(undef,nColumns)
+            colTypes=Array{Type}(undef,nColumns)
+            rowSize=0
+            for i in 1:nColumns
+                colNames[i]=read_wstring(io)
+                colTypeCodes[i]=read(io,Int8)
+                colSize=ntoh(read(io,Int32))
+                colTypeSizes[i]=colSize
+                rowSize+=colSize
+                colTypes[i]=decode_type(colTypeCodes[i],colSize)
+            end
+            nRows=ntoh(read(io,UInt32))
+            if dataElementPos != position(io)
+                @warn "current io position is "*string(position(io))*", should be next data element at "*string(dataElementPos)*", performing seek to "*string(dataElementPos)
+                seek(io,dataElementPos)
+            end
+            dataSetColumns=Dict{Int,AbstractArray}()
+            buffer=zeros(UInt8,nRows*rowSize)
+            readbytes!(io,buffer,nRows*rowSize)
+            permBuffer=PermutedDimsArray(reshape(buffer,(rowSize,nRows)),(2,1))
+            startColIndex=0
+            endColIndex=0
+            for i in 1:nColumns
+                startColIndex=endColIndex+1
+                endColIndex=startColIndex+colTypeSizes[i]-1
+                if colTypeCodes[i] <= 6
+                    column=map( row -> reinterpret(colTypes[i],reverse(row[startColIndex:endColIndex]))[1], eachrow(permBuffer))
+                elseif colTypeCodes[i] == 7
 
+                elseif colTypeCodes[i] == 8
+
+                else
+                    @error "unknown type code, code="*string(colTypeCodes[i])
+                end
+                dataSetColumns[i]=column
+            end
+            dataSets[dataSetsIndex]=DataSet(true,dataSetName,nParameters,names,rawvalues,values,types,colNames,colTypeCodes,colTypeSizes,colTypes,dataSetColumns)
+            dataSetsIndex+=1
+        end
+        dataGroups[dataGroupsIndex]=DataGroup(true,nDataSets,dataSets)
+        dataGroupsIndex+=1
     end
-
     return Cel(true,nGroups,dataHeader,dataGroups)
+end
+
+function decode_type(c::Int8,s::Int32)
+    if c==0 && s==1
+        return Int8
+    elseif  c==1 && s==1
+        return UInt8
+    elseif  c==2 && s==2
+        return Int16
+    elseif  c==3 && s==2
+        return UInt16
+    elseif  c==4 && s==4
+        return Int32
+    elseif  c==5 && s==4
+        return UInt32
+    elseif  c==6 && s==2
+        return Float16
+    elseif  c==6 && s==4
+        return Float32
+    elseif  c==6 && s==8
+        return Float64
+    elseif  c==7 || c==8
+        return String
+    else
+        @error "unknown type code and size combination, code="*string(c)*" and size="*string(s)*", falling back to String"
+    end
+    return String
 end
 
 function cel_read_generic_header(io::IO)
