@@ -116,6 +116,7 @@ end
 
 function cel_read_v4(io::IO)
     #not implemented, need example file
+    @warn "CEL file version 4 not implemented, need example file"
 	return Cel()
 end
 
