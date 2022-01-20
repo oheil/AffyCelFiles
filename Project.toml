@@ -2,3 +2,6 @@ name = "AffyCelFiles"
 uuid = "efc83544-1c47-49f8-8867-17a7f6cc0942"
 authors = ["Oliver Heil <git@heilbit.de>"]
 version = "0.1.0"
+
+[deps]
+Revise = "295af30f-e4ad-537b-8983-00126c2a3abe"

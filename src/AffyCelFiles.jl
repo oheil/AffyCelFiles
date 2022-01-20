@@ -76,7 +76,8 @@ struct Cel
     dataGroups::Array{DataGroup,1}
     function Cel(isDefined=false)
 		new(
-			isDefined
+			isDefined,
+            -1
 		)
 	end
     function Cel(args...)
@@ -86,41 +87,178 @@ struct Cel
 	end
 end
 
-function cel_read(file::AbstractString)
-	io=open(file,"r")
-	cel=cel_read(io)
+struct Qc
+    qc::Dict{String,String}
+    cells::Vector{Vector{Int}}  #only INDEX
+    function Qc()
+        new(
+            Dict{String,String}(),
+            Vector{Vector{Int}}(undef,1)
+        )
+    end    
+end
+
+struct Cdf
+    cdf::Dict{String,String}
+    chip::Dict{String,String}
+    qc::Vector{Qc}
+    function Cdf()
+        new(
+            Dict{String,String}(),
+            Dict{String,String}(),
+            Vector{Qc}()
+            )
+    end
+    function Cdf(args...)
+		new(
+			args...
+		)
+	end
+end
+
+function cel_read(file::AbstractString; cdf="")
+    file=normpath(file)
+    io=open(file,"r")
+	cel=cel_read(io; cdf)
 	close(io)
 	cel
 end
 
-function cel_read(io::IO)::Cel
+function cdf_read(file::AbstractString)
+    file=normpath(file)
+    io=open(file,"r")
+	cdf=cdf_read(io)
+	close(io)
+	cdf
+end
+
+function cdf_read(io::IO)::Cdf
+	seekstart(io)
+    start_section=strip(readline(io))
+
+    if start_section=="[CDF]"
+        #ASCII text format is used by the MAS and GCOS 1.0 software. This was also known as the ASCII version.
+        #  https://media.affymetrix.com/support/developer/powertools/changelog/gcos-agcc/cdf.html#CDF_TEXT
+        return cdf_read_ascii(io)
+    end
+
+    seekstart(io)
+    magic=read(io,Int8)
+    @warn "Magic number is "*string(magic)
+    if magic == 67
+        #XDA format is used by the GCOS 1.2 and above software. This was also known as the binary or XDA version.
+        #  https://media.affymetrix.com/support/developer/powertools/changelog/gcos-agcc/cdf.html#CDF_XDA
+        return cdf_read_xda(io)
+    end
+
+    @warn "Unknown CDF file format"
+	return Cdf()
+end
+
+function cdf_read_xda(io::IO)
+    #not implemented, need example file
+    @warn "CDF file xda format not implemented, need example file"
+	return Cdf()
+end
+
+function cdf_read_ascii(io::IO)::Cdf
+	seekstart(io)
+    section=0
+    currentQCindex=0
+    indexOfINDEX=0
+    cdf=Dict{String,String}()
+    chip=Dict{String,String}()
+    qc=Vector{Qc}()
+    for line in eachline(io)
+        line=strip(line)
+        found=false
+        if contains(line,"=")
+            (tag,value)=split(line,"=")
+            found=true
+        end
+        if found
+            if section == 1   #[CDF]
+                cdf[tag]=value
+            elseif section == 2 #[Chip]
+                chip[tag]=value
+                if tag=="NumQCUnits"
+                    numQCUnits=parse(Int,value)
+                    qc=Vector{Qc}(undef,numQCUnits)
+                end
+            elseif section == 3 #[QCn]
+                qc[currentQCindex].qc[tag]=value
+                if tag == "NumberCells"
+                    numberCells=parse(Int,value)
+                    qc[currentQCindex].cells[1]=Vector{Int}(undef,numberCells)
+                end
+                if startswith(tag,"CellHeader")
+                    cols=split(value,"\t")
+                    indexOfINDEX=findfirst(isequal("INDEX"),cols)
+                end
+                if startswith(tag,"Cell") && indexOfINDEX > 0
+                    cell_index=-1
+                    m=match(r"Cell(\d+)",tag)
+                    if m !== nothing
+                        cell_index=parse(Int,m.captures[1])
+                        cols=split(value,"\t")
+                        qc[currentQCindex].cells[1][cell_index]=parse(Int,cols[indexOfINDEX])
+                    end                   
+                end
+            elseif section == 4 #[Unitn]
+
+
+            end
+        end
+        if startswith(line,"[")
+            section=0
+        end
+        if line=="[CDF]"
+            section=1
+        elseif line=="[Chip]"
+            section=2
+        elseif startswith(line,"[QC")
+            m=match(r"\[QC(\d+)\]",line)
+            if m !== nothing
+                indexOfINDEX=-1
+                currentQCindex=parse(Int,m.captures[1])
+                qc[currentQCindex]=Qc()
+                section=3
+            end
+
+        end
+
+    end
+    return Cdf(cdf,chip,qc)
+end
+
+function cel_read(io::IO; cdf="")::Cel
 	seekstart(io)
     magic=read(io,Int8)
     if magic == 59
         #Command Console generic data file format
-        #  http://media.affymetrix.com/support/developer/powertools/changelog/gcos-agcc/generic.html
-        return cel_read_generic(io)
+        #  https://media.affymetrix.com/support/developer/powertools/changelog/gcos-agcc/generic.html
+        return cel_read_generic(io; cdf)
     end
     
 	seekstart(io)
     magic=read(io,Int32)
     if magic == 64
         #Version 4 Format
-        #  http://media.affymetrix.com/support/developer/powertools/changelog/gcos-agcc/cel.html
-        return cel_read_v4(io)
+        #  https://media.affymetrix.com/support/developer/powertools/changelog/gcos-agcc/cel.html
+        return cel_read_v4(io; cdf)
     end
 
 	@warn "Unknown CEL file version"
 	return Cel()
 end
 
-function cel_read_v4(io::IO)
+function cel_read_v4(io::IO; cdf="")
     #not implemented, need example file
     @warn "CEL file version 4 not implemented, need example file"
 	return Cel()
 end
 
-function cel_read_generic(io::IO)
+function cel_read_generic(io::IO; cdf="")
     version=read(io,Int8)
     if version != 1
         @warn "Version number of Command Console generic data file is "*string(version)*". Expected 1."
@@ -131,6 +269,34 @@ function cel_read_generic(io::IO)
     dataHeader=cel_read_generic_header(io)
     #println(firstGroupPos)
     #println(position(io))
+    
+
+
+    chiptype=""
+    chiptype_index=findfirst(x->x=="affymetrix-array-type",dataHeader.names)
+    if chiptype_index == Nothing
+        @warn "chiptype is not part of headers"
+    else
+        chiptype=dataHeader.values[chiptype_index]
+    end
+    if ! isempty(cdf) && ( isdir(cdf) || isdirpath(cdf) )
+        cdf = normpath(joinpath(cdf,chiptype*".cdf"))
+    end
+    if isempty(cdf)
+        cdf=chiptype*".cdf"
+    end
+    if ! isempty(cdf)
+        if ! isfile(cdf)
+            @error "cdf file or path " * cdf * " does not exist or can't be opened"
+            return Cel()
+        end
+    else
+        @error "cdf file is empty"
+        return Cel()
+    end
+    cdf=cdf_read(cdf)
+
+
 
     if firstGroupPos != position(io)
         @warn "current io position is "*string(position(io))*", should be first data group at "*string(firstGroupPos)*", performing seek to "*string(firstGroupPos)
