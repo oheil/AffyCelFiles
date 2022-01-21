@@ -118,17 +118,25 @@ end
 
 function cel_read(file::AbstractString; cdf="")
     file=normpath(file)
-    io=open(file,"r")
-	cel=cel_read(io; cdf)
-	close(io)
+    if isfile(file)
+        io=open(file,"r")
+        cel=cel_read(io; cdf)
+        close(io)
+    else
+        cel=Cel()
+    end
 	cel
 end
 
 function cdf_read(file::AbstractString)
     file=normpath(file)
-    io=open(file,"r")
-	cdf=cdf_read(io)
-	close(io)
+    if isfile(file)
+        io=open(file,"r")
+    	cdf=cdf_read(io)
+    	close(io)
+    else
+        cdf=Cdf()
+    end
 	cdf
 end
 
@@ -288,11 +296,11 @@ function cel_read_generic(io::IO; cdf="")
     if ! isempty(cdf)
         if ! isfile(cdf)
             @error "cdf file or path " * cdf * " does not exist or can't be opened"
-            return Cel()
+            #return Cel()
         end
     else
         @error "cdf file is empty"
-        return Cel()
+        #return Cel()
     end
     cdf=cdf_read(cdf)
 
