@@ -98,10 +98,33 @@ struct Qc
     end    
 end
 
+struct Block
+    block::Dict{String,String}
+    cells::Vector{Vector{Int}}  #only INDEX
+    function Block()
+        new(
+            Dict{String,String}(),
+            Vector{Vector{Int}}(undef,1)
+        )
+    end    
+end
+
+struct Unit
+    unit::Dict{String,String}
+    blocks::Vector{Vector{Block}}
+    function Unit()
+        new(
+            Dict{String,String}(),
+            Vector{Vector{Block}}(undef,1)
+        )
+    end
+end
+
 struct Cdf
     cdf::Dict{String,String}
     chip::Dict{String,String}
     qc::Vector{Qc}
+    units::Vector{Unit}
     function Cdf()
         new(
             Dict{String,String}(),
@@ -173,10 +196,13 @@ function cdf_read_ascii(io::IO)::Cdf
 	seekstart(io)
     section=0
     currentQCindex=0
+    currentUnitIndex=0
+    currentBlockIndex=0
     indexOfINDEX=0
     cdf=Dict{String,String}()
     chip=Dict{String,String}()
     qc=Vector{Qc}()
+    units=Vector{Unit}()
     for line in eachline(io)
         line=strip(line)
         found=false
@@ -192,6 +218,10 @@ function cdf_read_ascii(io::IO)::Cdf
                 if tag=="NumQCUnits"
                     numQCUnits=parse(Int,value)
                     qc=Vector{Qc}(undef,numQCUnits)
+                end
+                if tag=="MaxUnit"
+                    maxUnits=parse(Int,value)
+                    units=Vector{Unit}(undef,maxUnits)
                 end
             elseif section == 3 #[QCn]
                 qc[currentQCindex].qc[tag]=value
@@ -213,8 +243,33 @@ function cdf_read_ascii(io::IO)::Cdf
                     end                   
                 end
             elseif section == 4 #[Unitn]
-
-
+                units[currentUnitIndex].unit[tag]=value
+                if tag == "NumberBlocks"
+                    numberBlocks=parse(Int,value)
+                    units[currentUnitIndex].blocks[1]=Vector{Block}(undef,numberBlocks)
+                end
+            elseif section == 5 #[Unitn_Blockm]
+                if ! isassigned(units[currentUnitIndex].blocks[1],currentBlockIndex)
+                    units[currentUnitIndex].blocks[1][currentBlockIndex]=Block() 
+                end
+                units[currentUnitIndex].blocks[1][currentBlockIndex].block[tag]=value
+                if tag == "NumCells"
+                    numCells=parse(Int,value)
+                    units[currentUnitIndex].blocks[1][currentBlockIndex].cells[1]=Vector{Int}(undef,numCells)
+                end
+                if startswith(tag,"CellHeader")
+                    cols=split(value,"\t")
+                    indexOfINDEX=findfirst(isequal("INDEX"),cols)
+                end
+                if startswith(tag,"Cell") && indexOfINDEX > 0
+                    cell_index=-1
+                    m=match(r"Cell(\d+)",tag)
+                    if m !== nothing
+                        cell_index=parse(Int,m.captures[1])
+                        cols=split(value,"\t")
+                        units[currentUnitIndex].blocks[1][currentBlockIndex].cells[1][cell_index]=parse(Int,cols[indexOfINDEX])
+                    end                   
+                end
             end
         end
         if startswith(line,"[")
@@ -232,11 +287,23 @@ function cdf_read_ascii(io::IO)::Cdf
                 qc[currentQCindex]=Qc()
                 section=3
             end
-
+        elseif startswith(line,"[Unit") && ! contains(line,"Block")
+            m=match(r"\[Unit(\d+)\]",line)
+            if m !== nothing
+                currentUnitIndex=parse(Int,m.captures[1])
+                units[currentUnitIndex]=Unit()
+                section=4
+            end
+        elseif startswith(line,"[Unit") && contains(line,"Block")
+            m=match(r"\[Unit(\d+)_Block(\d+)\]",line)
+            if m !== nothing
+                currentUnitIndex=parse(Int,m.captures[1])
+                currentBlockIndex=parse(Int,m.captures[2])
+                section=5
+            end
         end
-
     end
-    return Cdf(cdf,chip,qc)
+    return Cdf(cdf,chip,qc,units)
 end
 
 function cel_read(io::IO; cdf="")::Cel
