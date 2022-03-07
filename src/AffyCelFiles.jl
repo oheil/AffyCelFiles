@@ -2,6 +2,7 @@ module AffyCelFiles
 
 #http://media.affymetrix.com/support/developer/powertools/changelog/gcos-agcc/cel.html
 
+using CRC32c
 
 struct DataHeader
     isDefined::Bool
@@ -139,11 +140,15 @@ struct Cdf
 	end
 end
 
-function cel_read(file::AbstractString; cdf="")
+cdfs=Dict{String,AffyCelFiles.Cdf}()
+cdfs_files=Dict{String,String}()
+cdfs_checksums=Dict{String,UInt32}()
+
+function cel_read(file::AbstractString, cdf_file="")
     file=normpath(file)
     if isfile(file)
         io=open(file,"r")
-        cel=cel_read(io; cdf)
+        cel=cel_read(io, cdf_file)
         close(io)
     else
         cel=Cel()
@@ -151,26 +156,34 @@ function cel_read(file::AbstractString; cdf="")
 	cel
 end
 
-function cdf_read(file::AbstractString)
-    file=normpath(file)
-    if isfile(file)
-        io=open(file,"r")
-    	cdf=cdf_read(io)
+function cdf_read(cdf_file::AbstractString)
+    cdf_file=normpath(cdf_file)
+    if isfile(cdf_file)
+        new_crc=open(crc32c,cdf_file)
+        io=open(cdf_file,"r")
+    	cdf=cdf_read(io,new_crc)
     	close(io)
     else
         cdf=Cdf()
     end
-	cdf
+    
+    if length(cdf.chip["Name"])>0 && ! haskey(cdfs,cdf.chip["Name"])
+        cdfs[cdf.chip["Name"]]=cdf
+        cdfs_files[cdf.chip["Name"]]=file
+        cdfs_checksums[cdf.chip["Name"]]=open(crc32c,file)
+    end
+
+    cdf
 end
 
-function cdf_read(io::IO)::Cdf
+function cdf_read(io::IO, new_crc=0x0)::Cdf
 	seekstart(io)
     start_section=strip(readline(io))
 
     if start_section=="[CDF]"
         #ASCII text format is used by the MAS and GCOS 1.0 software. This was also known as the ASCII version.
         #  https://media.affymetrix.com/support/developer/powertools/changelog/gcos-agcc/cdf.html#CDF_TEXT
-        return cdf_read_ascii(io)
+        return cdf_read_ascii(io, new_crc)
     end
 
     seekstart(io)
@@ -192,7 +205,7 @@ function cdf_read_xda(io::IO)
 	return Cdf()
 end
 
-function cdf_read_ascii(io::IO)::Cdf
+function cdf_read_ascii(io::IO, new_crc)::Cdf
 	seekstart(io)
     section=0
     currentQCindex=0
@@ -215,6 +228,17 @@ function cdf_read_ascii(io::IO)::Cdf
                 cdf[tag]=value
             elseif section == 2 #[Chip]
                 chip[tag]=value
+                if tag=="Name" && haskey(cdfs,value)
+                    if new_crc == cdfs_checksums[value] 
+                        @info "cdf for "*value*" already in cache, source "*cdfs_files[value]
+                        return cdfs[value]
+                    else
+                        @info "cdf for "*value*" already in cache, but source "*cdfs_files[value]*" has changed"
+                        delete!(cdfs,value)
+                        delete!(cdfs_files,value)
+                        delete!(cdfs_checksums,value)
+                    end
+                end
                 if tag=="NumQCUnits"
                     numQCUnits=parse(Int,value)
                     qc=Vector{Qc}(undef,numQCUnits)
@@ -306,13 +330,13 @@ function cdf_read_ascii(io::IO)::Cdf
     return Cdf(cdf,chip,qc,units)
 end
 
-function cel_read(io::IO; cdf="")::Cel
+function cel_read(io::IO, cdf_file="")::Cel
 	seekstart(io)
     magic=read(io,Int8)
     if magic == 59
         #Command Console generic data file format
         #  https://media.affymetrix.com/support/developer/powertools/changelog/gcos-agcc/generic.html
-        return cel_read_generic(io; cdf)
+        return cel_read_generic(io, cdf_file)
     end
     
 	seekstart(io)
@@ -320,20 +344,20 @@ function cel_read(io::IO; cdf="")::Cel
     if magic == 64
         #Version 4 Format
         #  https://media.affymetrix.com/support/developer/powertools/changelog/gcos-agcc/cel.html
-        return cel_read_v4(io; cdf)
+        return cel_read_v4(io, cdf_file)
     end
 
 	@warn "Unknown CEL file version"
 	return Cel()
 end
 
-function cel_read_v4(io::IO; cdf="")
+function cel_read_v4(io::IO, cdf_file="")
     #not implemented, need example file
     @warn "CEL file version 4 not implemented, need example file"
 	return Cel()
 end
 
-function cel_read_generic(io::IO; cdf="")
+function cel_read_generic(io::IO, cdf_file="")
     version=read(io,Int8)
     if version != 1
         @warn "Version number of Command Console generic data file is "*string(version)*". Expected 1."
@@ -344,34 +368,34 @@ function cel_read_generic(io::IO; cdf="")
     dataHeader=cel_read_generic_header(io)
     #println(firstGroupPos)
     #println(position(io))
-    
-
 
     chiptype=""
     chiptype_index=findfirst(x->x=="affymetrix-array-type",dataHeader.names)
     if chiptype_index == Nothing
         @warn "chiptype is not part of headers"
+        chiptype="unknown"
     else
         chiptype=dataHeader.values[chiptype_index]
     end
-    if ! isempty(cdf) && ( isdir(cdf) || isdirpath(cdf) )
-        cdf = normpath(joinpath(cdf,chiptype*".cdf"))
+    
+    if isempty(cdf_file) && haskey(cdfs,chiptype) && haskey(cdfs_files,chiptype)
+        cdf_file=cdfs_files[chiptype]
     end
-    if isempty(cdf)
-        cdf=chiptype*".cdf"
+    if ! isempty(cdf_file) && ( isdir(cdf_file) || isdirpath(cdf_file) )
+        cdf_file = normpath(joinpath(cdf_file,chiptype*".cdf"))
     end
-    if ! isempty(cdf)
-        if ! isfile(cdf)
-            @error "cdf file or path " * cdf * " does not exist or can't be opened"
-            #return Cel()
+    if isempty(cdf_file)
+        cdf_file=chiptype*".cdf"
+    end
+    if ! isfile(cdf_file)
+        if haskey(cdfs,chiptype) && haskey(cdfs_files,chiptype)
+            @warn "cdf file " * cdf_file * " does not exist or can't be opened, using "*cdfs_files[chiptype]
+            cdf_file=cdfs_files[chiptype]
+        else
+            @error "cdf file " * cdf_file * " does not exist or can't be opened"
         end
-    else
-        @error "cdf file is empty"
-        #return Cel()
     end
-    cdf=cdf_read(cdf)
-
-
+    cdf=cdf_read(cdf_file)
 
     if firstGroupPos != position(io)
         @warn "current io position is "*string(position(io))*", should be first data group at "*string(firstGroupPos)*", performing seek to "*string(firstGroupPos)
