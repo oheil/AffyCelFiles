@@ -102,10 +102,12 @@ end
 struct Block
     block::Dict{String,String}
     cells::Vector{Vector{Int}}  #only INDEX
+    pm::Vector{Vector{Bool}}    #PBASE!=TBASE => perfect match
     function Block()
         new(
             Dict{String,String}(),
-            Vector{Vector{Int}}(undef,1)
+            Vector{Vector{Int}}(undef,1),
+            Vector{Vector{Bool}}(undef,1)
         )
     end    
 end
@@ -126,11 +128,14 @@ struct Cdf
     chip::Dict{String,String}
     qc::Vector{Qc}
     units::Vector{Unit}
+    definedUnitIndices::Dict{Int,Bool}
     function Cdf()
         new(
             Dict{String,String}(),
             Dict{String,String}(),
-            Vector{Qc}()
+            Vector{Qc}(),
+            Vector{Unit}(),
+            Dict{Int,Bool}()
             )
     end
     function Cdf(args...)
@@ -144,16 +149,65 @@ cdfs=Dict{String,AffyCelFiles.Cdf}()
 cdfs_files=Dict{String,String}()
 cdfs_checksums=Dict{String,UInt32}()
 
-function cel_read(file::AbstractString, cdf_file="")
-    file=normpath(file)
-    if isfile(file)
-        io=open(file,"r")
-        cel=cel_read(io, cdf_file)
-        close(io)
-    else
-        cel=Cel()
+function intensities(cel::Cel, cdf::Cdf )
+    dataGroupIndex=0
+    dataSetIndex=0
+    dataSetColIndex=0
+    for dataGroupsIndex in eachindex(cel.dataGroups)
+        for dataSetsIndex in eachindex(cel.dataGroups[dataGroupsIndex].dataSets)
+            if cel.dataGroups[dataGroupsIndex].dataSets[dataSetsIndex].dataSetName == "Intensity"
+                dataGroupIndex=dataGroupsIndex
+                dataSetIndex=dataSetsIndex
+                for dataSetColNamesIndex in eachindex(cel.dataGroups[dataGroupIndex].dataSets[dataSetIndex].dataSetColNames)
+                    if cel.dataGroups[dataGroupIndex].dataSets[dataSetIndex].dataSetColNames[dataSetColNamesIndex] == "Intensity"
+                        dataSetColIndex=dataSetColNamesIndex
+                        break
+                    end
+                end
+                break
+            end
+        end
+        if dataGroupIndex>0
+            break
+        end
     end
-	cel
+    if dataGroupIndex > 0 && dataSetIndex > 0 && dataSetColIndex > 0
+        intensity=cel.dataGroups[dataGroupIndex].dataSets[dataSetIndex].dataSetColumns[dataSetColIndex]
+    else
+        @error "intensity data not found in cel data"
+    end
+
+    pm=Dict{String,Vector{Int}}()
+    mm=Dict{String,Vector{Int}}()
+    for unitIndex in keys(cdf.definedUnitIndices)
+        unit=cdf.units[unitIndex]
+        for blocks in unit.blocks
+            for block in blocks
+                id=block.block["Name"]
+                pmIntensities=Vector{Int}()
+                mmIntensities=Vector{Int}()
+                if haskey(pm,id) && haskey(mm,id)
+                    pmIntensities=pm[id]
+                    mmIntensities=mm[id]
+                end
+                for cellsIndex in eachindex(block.cells)
+                    cells=block.cells[cellsIndex]
+                    pms=block.pm[cellsIndex]
+                    for cellIndex in eachindex(cells)
+                        index=cells[cellIndex]
+                        if pms[cellIndex]
+                            push!(pmIntensities,intensity[index+1])
+                        else
+                            push!(mmIntensities,intensity[index+1])
+                        end
+                    end
+                end
+                pm[id]=pmIntensities
+                mm[id]=mmIntensities
+            end
+        end
+    end
+    (pm=pm,mm=mm)
 end
 
 function cdf_read(cdf_file::AbstractString)
@@ -163,14 +217,15 @@ function cdf_read(cdf_file::AbstractString)
         io=open(cdf_file,"r")
     	cdf=cdf_read(io,new_crc)
     	close(io)
-    else
-        cdf=Cdf()
-    end
     
-    if length(cdf.chip["Name"])>0 && ! haskey(cdfs,cdf.chip["Name"])
-        cdfs[cdf.chip["Name"]]=cdf
-        cdfs_files[cdf.chip["Name"]]=file
-        cdfs_checksums[cdf.chip["Name"]]=open(crc32c,file)
+        if length(cdf.chip["Name"])>0 && ! haskey(cdfs,cdf.chip["Name"])
+            cdfs[cdf.chip["Name"]]=cdf
+            cdfs_files[cdf.chip["Name"]]=cdf_file
+            cdfs_checksums[cdf.chip["Name"]]=open(crc32c,cdf_file)
+        end
+    else
+        @error "Cdf file "*cdf_file*" doesn't exist"
+        cdf=Cdf()
     end
 
     cdf
@@ -212,10 +267,13 @@ function cdf_read_ascii(io::IO, new_crc)::Cdf
     currentUnitIndex=0
     currentBlockIndex=0
     indexOfINDEX=0
+    indexOfPBASE=0
+    indexOfTBASE=0
     cdf=Dict{String,String}()
     chip=Dict{String,String}()
     qc=Vector{Qc}()
     units=Vector{Unit}()
+    definedUnitIndices=Dict{Int, Bool}()
     for line in eachline(io)
         line=strip(line)
         found=false
@@ -280,18 +338,22 @@ function cdf_read_ascii(io::IO, new_crc)::Cdf
                 if tag == "NumCells"
                     numCells=parse(Int,value)
                     units[currentUnitIndex].blocks[1][currentBlockIndex].cells[1]=Vector{Int}(undef,numCells)
+                    units[currentUnitIndex].blocks[1][currentBlockIndex].pm[1]=Vector{Bool}(undef,numCells)
                 end
                 if startswith(tag,"CellHeader")
                     cols=split(value,"\t")
                     indexOfINDEX=findfirst(isequal("INDEX"),cols)
+                    indexOfPBASE=findfirst(isequal("PBASE"),cols)
+                    indexOfTBASE=findfirst(isequal("TBASE"),cols)
                 end
-                if startswith(tag,"Cell") && indexOfINDEX > 0
+                if startswith(tag,"Cell") && indexOfINDEX > 0 && indexOfPBASE > 0 && indexOfTBASE > 0
                     cell_index=-1
                     m=match(r"Cell(\d+)",tag)
                     if m !== nothing
                         cell_index=parse(Int,m.captures[1])
                         cols=split(value,"\t")
                         units[currentUnitIndex].blocks[1][currentBlockIndex].cells[1][cell_index]=parse(Int,cols[indexOfINDEX])
+                        units[currentUnitIndex].blocks[1][currentBlockIndex].pm[1][cell_index]= cols[indexOfPBASE]!=cols[indexOfTBASE]
                     end                   
                 end
             end
@@ -316,6 +378,7 @@ function cdf_read_ascii(io::IO, new_crc)::Cdf
             if m !== nothing
                 currentUnitIndex=parse(Int,m.captures[1])
                 units[currentUnitIndex]=Unit()
+                definedUnitIndices[currentUnitIndex]=true
                 section=4
             end
         elseif startswith(line,"[Unit") && contains(line,"Block")
@@ -327,7 +390,20 @@ function cdf_read_ascii(io::IO, new_crc)::Cdf
             end
         end
     end
-    return Cdf(cdf,chip,qc,units)
+    return Cdf(cdf,chip,qc,units,definedUnitIndices)
+end
+
+function cel_read(cel_file::AbstractString, cdf_file="")
+    cel_file=normpath(cel_file)
+    if isfile(cel_file)
+        io=open(cel_file,"r")
+        cel=cel_read(io, cdf_file)
+        close(io)
+    else
+        @error "Cel file "*cel_file*" doesn't exist"
+        cel=Cel()
+    end
+	cel
 end
 
 function cel_read(io::IO, cdf_file="")::Cel
@@ -378,7 +454,7 @@ function cel_read_generic(io::IO, cdf_file="")
         chiptype=dataHeader.values[chiptype_index]
     end
     
-    if isempty(cdf_file) && haskey(cdfs,chiptype) && haskey(cdfs_files,chiptype)
+    if isempty(cdf_file) && haskey(AffyCelFiles.cdfs,chiptype) && haskey(AffyCelFiles.cdfs_files,chiptype)
         cdf_file=cdfs_files[chiptype]
     end
     if ! isempty(cdf_file) && ( isdir(cdf_file) || isdirpath(cdf_file) )
@@ -388,9 +464,9 @@ function cel_read_generic(io::IO, cdf_file="")
         cdf_file=chiptype*".cdf"
     end
     if ! isfile(cdf_file)
-        if haskey(cdfs,chiptype) && haskey(cdfs_files,chiptype)
-            @warn "cdf file " * cdf_file * " does not exist or can't be opened, using "*cdfs_files[chiptype]
-            cdf_file=cdfs_files[chiptype]
+        if haskey(AffyCelFiles.cdfs,chiptype) && haskey(AffyCelFiles.cdfs_files,chiptype)
+            @warn "cdf file " * cdf_file * " does not exist or can't be opened, using "*AffyCelFiles.cdfs_files[chiptype]
+            cdf_file=AffyCelFiles.cdfs_files[chiptype]
         else
             @error "cdf file " * cdf_file * " does not exist or can't be opened"
         end

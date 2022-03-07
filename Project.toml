@@ -4,4 +4,5 @@ authors = ["Oliver Heil <git@heilbit.de>"]
 version = "0.1.0"
 
 [deps]
+CRC32c = "8bf52ea8-c179-5cab-976a-9e18b702a9bc"
 Revise = "295af30f-e4ad-537b-8983-00126c2a3abe"
