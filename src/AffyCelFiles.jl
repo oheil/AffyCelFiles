@@ -149,7 +149,82 @@ cdfs=Dict{String,AffyCelFiles.Cdf}()
 cdfs_files=Dict{String,String}()
 cdfs_checksums=Dict{String,UInt32}()
 
-function intensities(cel::Cel, cdf::Cdf )
+#https://media.affymetrix.com/support/developer/powertools/changelog/file-format-pgf.html
+#https://media.affymetrix.com/support/developer/powertools/changelog/file-format-clf.html
+
+struct Pgf
+    chip_name::String
+    header_tags::Vector{String}
+    header_values::Vector{String}
+    probe_ids::Dict{String,Vector{String}}       #probeset_id -> [probe_id1, probe_id2, ...]
+    pm::Dict{String,Bool}               #probe_id -> is perfect match(true)
+    function Pgf()
+        new(
+            "",
+            Vector{String}(),
+            Vector{String}(),
+            Dict{String,Vector{String}}(),
+            Dict{String,Bool}()
+            )
+    end
+    function Pgf(args...)
+		new(
+			args...
+		)
+	end
+end
+
+pgfs=Dict{String,AffyCelFiles.Pgf}()
+pgfs_files=Dict{String,String}()
+pgfs_checksums=Dict{String,UInt32}()
+
+struct Clf
+    chip_name::String
+    header_tags::Vector{String}
+    header_values::Vector{String}
+    coordinates::Dict{String,Tuple{Int,Int}}    #probe_id -> (x,y)
+    function Clf()
+        new(
+            "",
+            Vector{String}(),
+            Vector{String}(),
+            Dict{String,Tuple{Int,Int}}()
+            )
+    end
+    function Clf(args...)
+		new(
+			args...
+		)
+	end
+end
+
+clfs=Dict{String,AffyCelFiles.Clf}()
+clfs_files=Dict{String,String}()
+clfs_checksums=Dict{String,UInt32}()
+
+function intensities(cel::Cel, pgf::Pgf, clf::Clf)
+
+end
+
+function intensities(cel::Cel, cdf::Cdf)
+    pm=Dict{String,Vector{Int}}()
+    mm=Dict{String,Vector{Int}}()
+
+    cel_chiptype=""
+    cel_chiptype_index=findfirst(x->x=="affymetrix-array-type",cel.dataHeader.names)
+    if cel_chiptype_index == Nothing
+        @warn "chiptype is not part of headers in cel data"
+        cel_chiptype="unknown"
+    else
+        cel_chiptype=cel.dataHeader.values[cel_chiptype_index]
+    end
+    
+    cdf_chiptype=cdf.chip["Name"]
+    if cel_chiptype != cdf_chiptype
+        @error "chiptype of cel data ("*cel_chiptype*") and cdf data ("*cdf_chiptype*") don't match"
+        return (pm=pm,mm=mm)
+    end
+
     dataGroupIndex=0
     dataSetIndex=0
     dataSetColIndex=0
@@ -177,37 +252,215 @@ function intensities(cel::Cel, cdf::Cdf )
         @error "intensity data not found in cel data"
     end
 
-    pm=Dict{String,Vector{Int}}()
-    mm=Dict{String,Vector{Int}}()
-    for unitIndex in keys(cdf.definedUnitIndices)
-        unit=cdf.units[unitIndex]
-        for blocks in unit.blocks
-            for block in blocks
-                id=block.block["Name"]
-                pmIntensities=Vector{Int}()
-                mmIntensities=Vector{Int}()
-                if haskey(pm,id) && haskey(mm,id)
-                    pmIntensities=pm[id]
-                    mmIntensities=mm[id]
-                end
-                for cellsIndex in eachindex(block.cells)
-                    cells=block.cells[cellsIndex]
-                    pms=block.pm[cellsIndex]
-                    for cellIndex in eachindex(cells)
-                        index=cells[cellIndex]
-                        if pms[cellIndex]
-                            push!(pmIntensities,intensity[index+1])
-                        else
-                            push!(mmIntensities,intensity[index+1])
+    if ! isempty(cdf.definedUnitIndices)
+        for unitIndex in keys(cdf.definedUnitIndices)
+            unit=cdf.units[unitIndex]
+            for blocks in unit.blocks
+                for block in blocks
+                    id=block.block["Name"]
+                    pmIntensities=Vector{Int}()
+                    mmIntensities=Vector{Int}()
+                    if haskey(pm,id) && haskey(mm,id)
+                        pmIntensities=pm[id]
+                        mmIntensities=mm[id]
+                    end
+                    for cellsIndex in eachindex(block.cells)
+                        cells=block.cells[cellsIndex]
+                        pms=block.pm[cellsIndex]
+                        for cellIndex in eachindex(cells)
+                            index=cells[cellIndex]
+                            if pms[cellIndex]
+                                push!(pmIntensities,intensity[index+1])
+                            else
+                                push!(mmIntensities,intensity[index+1])
+                            end
                         end
                     end
+                    pm[id]=pmIntensities
+                    mm[id]=mmIntensities
                 end
-                pm[id]=pmIntensities
-                mm[id]=mmIntensities
+            end
+        end
+    else
+        @error "no valid cdf data"
+    end
+    (pm=pm,mm=mm)
+end
+
+#parked code for later
+function read_cel_with_cdf(cdf_file)
+    cdf=Cdf()
+    if isempty(cdf_file) && haskey(AffyCelFiles.cdfs,chiptype) && haskey(AffyCelFiles.cdfs_files,chiptype)
+        cdf_file=cdfs_files[chiptype]
+    end
+    if ! isempty(cdf_file) && ( isdir(cdf_file) || isdirpath(cdf_file) )
+        cdf_file = normpath(joinpath(cdf_file,chiptype*".cdf"))
+    end
+    if isempty(cdf_file)
+        cdf_file=chiptype*".cdf"
+    end
+    if ! isfile(cdf_file)
+        if haskey(AffyCelFiles.cdfs,chiptype) && haskey(AffyCelFiles.cdfs_files,chiptype)
+            @warn "cdf file " * cdf_file * " does not exist or can't be opened, using "*AffyCelFiles.cdfs_files[chiptype]
+            cdf_file=AffyCelFiles.cdfs_files[chiptype]
+            cdf=cdf_read(cdf_file)
+        else
+            @error "cdf file " * cdf_file * " does not exist or can't be opened"
+        end
+    end
+end
+
+
+
+
+
+
+function clf_read(clf_file::AbstractString)
+    clf_file=normpath(clf_file)
+    if isfile(clf_file)
+        new_crc=open(crc32c,clf_file)
+        io=open(clf_file,"r")
+    	clf=clf_read(io,new_crc)
+    	close(io)
+    
+        if length(clf.chip_name)>0 && ! haskey(clfs,clf.chip_name)
+            clfs[clf.chip_name]=clf
+            clfs_files[clf.chip_name]=clf_file
+            clfs_checksums[clf.chip_name]=open(crc32c,clf_file)
+        end
+    else
+        @error "Clf file "*clf_file*" doesn't exist"
+        clf=Clf()
+    end
+
+    clf
+end
+
+function clf_read(io::IO, new_crc)::Clf
+	seekstart(io)
+    chip_name=""
+    header_tags=Vector{String}()
+    header_values=Vector{String}()
+    coordinates=Dict{String,Tuple{Int,Int}}()
+
+    for line in eachline(io)
+        if startswith(line,"#%")
+            line=strip(line)
+            (tag,value)=split(line,"=")
+            tag=lstrip(tag,['#','%'])
+            push!(header_tags,tag)
+            push!(header_values,value)
+            if tag=="lib_set_name"
+                chip_name=value
+                if haskey(clfs,value)
+                    if new_crc == clfs_checksums[value] 
+                        @info "clf for "*value*" already in cache, source "*clfs_files[value]
+                        return clfs[value]
+                    else
+                        @info "clf for "*value*" already in cache, but source "*clfs_files[value]*" has changed"
+                        delete!(clfs,value)
+                        delete!(clfs_files,value)
+                        delete!(clfs_checksums,value)
+                    end
+                end
+            end
+        else
+            line=strip(line)
+            values=split(line)
+            if length(values)==3
+                x=parse(Int,values[2])
+                y=parse(Int,values[3])
+                coordinates[values[1]]=(x,y)
             end
         end
     end
-    (pm=pm,mm=mm)
+
+    return Clf(chip_name,header_tags,header_values,coordinates)
+end
+
+function pgf_read(pgf_file::AbstractString)
+    pgf_file=normpath(pgf_file)
+    if isfile(pgf_file)
+        new_crc=open(crc32c,pgf_file)
+        io=open(pgf_file,"r")
+    	pgf=pgf_read(io,new_crc)
+    	close(io)
+    
+        if length(pgf.chip_name)>0 && ! haskey(pgfs,pgf.chip_name)
+            pgfs[pgf.chip_name]=pgf
+            pgfs_files[pgf.chip_name]=pgf_file
+            pgfs_checksums[pgf.chip_name]=open(crc32c,pgf_file)
+        end
+    else
+        @error "Pgf file "*pgf_file*" doesn't exist"
+        pgf=Pgf()
+    end
+
+    pgf
+end
+
+function pgf_read(io::IO, new_crc)::Pgf
+	seekstart(io)
+    chip_name=""
+    header_tags=Vector{String}()
+    header_values=Vector{String}()
+    probe_ids=Dict{String,Vector{String}}()
+    pm=Dict{String,Bool}()
+    probeset_id=""
+    cur_probe_ids=Vector{String}()
+    for line in eachline(io)
+        if startswith(line,"#%")
+            line=strip(line)
+            (tag,value)=split(line,"=")
+            tag=lstrip(tag,['#','%'])
+            push!(header_tags,tag)
+            push!(header_values,value)
+            if tag=="lib_set_name"
+                chip_name=value
+                if haskey(pgfs,value)
+                    if new_crc == pgfs_checksums[value] 
+                        @info "pgf for "*value*" already in cache, source "*pgfs_files[value]
+                        return pgfs[value]
+                    else
+                        @info "pgf for "*value*" already in cache, but source "*pgfs_files[value]*" has changed"
+                        delete!(pgfs,value)
+                        delete!(pgfs_files,value)
+                        delete!(pgfs_checksums,value)
+                    end
+                end
+            end
+        elseif startswith(line,r"\d+\t")
+            if ! isempty(cur_probe_ids) && ! isempty(probeset_id)
+                probe_ids[probeset_id]=cur_probe_ids
+            end
+            line=strip(line)
+            values=split(line)
+            probeset_id=values[1]
+            if haskey(probe_ids,probeset_id)
+                cur_probe_ids=probe_ids[probeset_id]
+            else
+                cur_probe_ids=Vector{String}()
+            end
+        elseif startswith(line,r"\t\d+")
+            line=strip(line)
+            values=split(line)
+            atom_id=values[1]
+        elseif startswith(line,r"\t\t\d+")
+            line=strip(line)
+            values=split(line)
+            probe_id=values[1]
+            push!(cur_probe_ids,probe_id)
+            type=values[2]
+            if contains(type,"pm")
+                pm[probe_id]=true
+            end
+        end
+    end
+    if ! isempty(cur_probe_ids) && ! isempty(probeset_id)
+        probe_ids[probeset_id]=cur_probe_ids
+    end
+
+    return Pgf(chip_name,header_tags,header_values,probe_ids,pm)
 end
 
 function cdf_read(cdf_file::AbstractString)
@@ -393,11 +646,11 @@ function cdf_read_ascii(io::IO, new_crc)::Cdf
     return Cdf(cdf,chip,qc,units,definedUnitIndices)
 end
 
-function cel_read(cel_file::AbstractString, cdf_file="")
+function cel_read(cel_file::AbstractString)
     cel_file=normpath(cel_file)
     if isfile(cel_file)
         io=open(cel_file,"r")
-        cel=cel_read(io, cdf_file)
+        cel=cel_read(io)
         close(io)
     else
         @error "Cel file "*cel_file*" doesn't exist"
@@ -406,13 +659,13 @@ function cel_read(cel_file::AbstractString, cdf_file="")
 	cel
 end
 
-function cel_read(io::IO, cdf_file="")::Cel
+function cel_read(io::IO)::Cel
 	seekstart(io)
     magic=read(io,Int8)
     if magic == 59
         #Command Console generic data file format
         #  https://media.affymetrix.com/support/developer/powertools/changelog/gcos-agcc/generic.html
-        return cel_read_generic(io, cdf_file)
+        return cel_read_generic(io)
     end
     
 	seekstart(io)
@@ -420,20 +673,20 @@ function cel_read(io::IO, cdf_file="")::Cel
     if magic == 64
         #Version 4 Format
         #  https://media.affymetrix.com/support/developer/powertools/changelog/gcos-agcc/cel.html
-        return cel_read_v4(io, cdf_file)
+        return cel_read_v4(io)
     end
 
 	@warn "Unknown CEL file version"
 	return Cel()
 end
 
-function cel_read_v4(io::IO, cdf_file="")
+function cel_read_v4(io::IO)
     #not implemented, need example file
     @warn "CEL file version 4 not implemented, need example file"
 	return Cel()
 end
 
-function cel_read_generic(io::IO, cdf_file="")
+function cel_read_generic(io::IO)
     version=read(io,Int8)
     if version != 1
         @warn "Version number of Command Console generic data file is "*string(version)*". Expected 1."
@@ -454,25 +707,6 @@ function cel_read_generic(io::IO, cdf_file="")
         chiptype=dataHeader.values[chiptype_index]
     end
     
-    if isempty(cdf_file) && haskey(AffyCelFiles.cdfs,chiptype) && haskey(AffyCelFiles.cdfs_files,chiptype)
-        cdf_file=cdfs_files[chiptype]
-    end
-    if ! isempty(cdf_file) && ( isdir(cdf_file) || isdirpath(cdf_file) )
-        cdf_file = normpath(joinpath(cdf_file,chiptype*".cdf"))
-    end
-    if isempty(cdf_file)
-        cdf_file=chiptype*".cdf"
-    end
-    if ! isfile(cdf_file)
-        if haskey(AffyCelFiles.cdfs,chiptype) && haskey(AffyCelFiles.cdfs_files,chiptype)
-            @warn "cdf file " * cdf_file * " does not exist or can't be opened, using "*AffyCelFiles.cdfs_files[chiptype]
-            cdf_file=AffyCelFiles.cdfs_files[chiptype]
-        else
-            @error "cdf file " * cdf_file * " does not exist or can't be opened"
-        end
-    end
-    cdf=cdf_read(cdf_file)
-
     if firstGroupPos != position(io)
         @warn "current io position is "*string(position(io))*", should be first data group at "*string(firstGroupPos)*", performing seek to "*string(firstGroupPos)
         seek(io,firstGroupPos)
