@@ -1,6 +1,6 @@
 module AffyCelFiles
 
-#http://media.affymetrix.com/support/developer/powertools/changelog/gcos-agcc/cel.html
+#https://media.affymetrix.com/support/developer/powertools/changelog/file-formats.html
 
 using CRC32c
 
@@ -70,6 +70,8 @@ struct DataGroup
     end
 end
 
+#http://media.affymetrix.com/support/developer/powertools/changelog/gcos-agcc/cel.html
+
 struct Cel
     isDefined::Bool
     nGroups::Int
@@ -123,6 +125,8 @@ struct Unit
     end
 end
 
+#https://media.affymetrix.com/support/developer/powertools/changelog/gcos-agcc/cdf.html
+
 struct Cdf
     cdf::Dict{String,String}
     chip::Dict{String,String}
@@ -150,7 +154,6 @@ cdfs_files=Dict{String,String}()
 cdfs_checksums=Dict{String,UInt32}()
 
 #https://media.affymetrix.com/support/developer/powertools/changelog/file-format-pgf.html
-#https://media.affymetrix.com/support/developer/powertools/changelog/file-format-clf.html
 
 struct Pgf
     chip_name::String
@@ -178,17 +181,23 @@ pgfs=Dict{String,AffyCelFiles.Pgf}()
 pgfs_files=Dict{String,String}()
 pgfs_checksums=Dict{String,UInt32}()
 
+#https://media.affymetrix.com/support/developer/powertools/changelog/file-format-clf.html
+
 struct Clf
     chip_name::String
     header_tags::Vector{String}
     header_values::Vector{String}
     coordinates::Dict{String,Tuple{Int,Int}}    #probe_id -> (x,y)
+    max_x::Int
+    max_y::Int
     function Clf()
         new(
             "",
             Vector{String}(),
             Vector{String}(),
-            Dict{String,Tuple{Int,Int}}()
+            Dict{String,Tuple{Int,Int}}(),
+            -1,
+            -1
             )
     end
     function Clf(args...)
@@ -202,29 +211,48 @@ clfs=Dict{String,AffyCelFiles.Clf}()
 clfs_files=Dict{String,String}()
 clfs_checksums=Dict{String,UInt32}()
 
-function intensities(cel::Cel, pgf::Pgf, clf::Clf)
+#https://media.affymetrix.com/support/developer/powertools/changelog/file-format-mps.html
 
+struct Mps
+    chip_name::String
+    header_tags::Vector{String}
+    header_values::Vector{String}
+    other_ids::Dict{String,NamedTuple}        # probeset_id (from probeset_list) => (meta_probeset_id,transcript_cluster_id)
+    meta::Dict{String,Vector{String}}         # meta_probeset_id => list of probeset_id's
+    function Mps()
+        new(
+            "",
+            Vector{String}(),
+            Vector{String}(),
+            Dict{String,NamedTuple}(),
+            Dict{String,Vector{String}}()
+            )
+    end
+    function Mps(args...)
+		new(
+			args...
+		)
+	end
 end
 
-function intensities(cel::Cel, cdf::Cdf)
-    pm=Dict{String,Vector{Int}}()
-    mm=Dict{String,Vector{Int}}()
+mpss=Dict{String,AffyCelFiles.Mps}()
+mpss_files=Dict{String,String}()
+mpss_checksums=Dict{String,UInt32}()
 
-    cel_chiptype=""
-    cel_chiptype_index=findfirst(x->x=="affymetrix-array-type",cel.dataHeader.names)
-    if cel_chiptype_index == Nothing
+function get_chiptype(cel::Cel)
+    chiptype=""
+    chiptype_index=findfirst(x->x=="affymetrix-array-type",cel.dataHeader.names)
+    if chiptype_index == Nothing
         @warn "chiptype is not part of headers in cel data"
-        cel_chiptype="unknown"
+        chiptype="unknown"
     else
-        cel_chiptype=cel.dataHeader.values[cel_chiptype_index]
+        chiptype=cel.dataHeader.values[chiptype_index]
     end
-    
-    cdf_chiptype=cdf.chip["Name"]
-    if cel_chiptype != cdf_chiptype
-        @error "chiptype of cel data ("*cel_chiptype*") and cdf data ("*cdf_chiptype*") don't match"
-        return (pm=pm,mm=mm)
-    end
+    return chiptype
+end
 
+function get_intensities(cel::Cel)
+    intensities=Vector{Float32}()
     dataGroupIndex=0
     dataSetIndex=0
     dataSetColIndex=0
@@ -247,19 +275,168 @@ function intensities(cel::Cel, cdf::Cdf)
         end
     end
     if dataGroupIndex > 0 && dataSetIndex > 0 && dataSetColIndex > 0
-        intensity=cel.dataGroups[dataGroupIndex].dataSets[dataSetIndex].dataSetColumns[dataSetColIndex]
-    else
+        intensities=cel.dataGroups[dataGroupIndex].dataSets[dataSetIndex].dataSetColumns[dataSetColIndex]
+    end
+    return intensities
+end
+
+function intensities(cel::Cel, pgf::Pgf, clf::Clf, mps::Mps=Mps())
+    pm=Dict{String,Vector{Float32}}()
+    mm=Dict{String,Vector{Float32}}()
+
+    cel_chiptype=AffyCelFiles.get_chiptype(cel)
+    clf_chiptype=clf.chip_name
+    pgf_chiptype=pgf.chip_name
+    if cel_chiptype != clf_chiptype || cel_chiptype != pgf_chiptype || clf_chiptype != pgf_chiptype
+        @error "chiptype of cel data ("*cel_chiptype*"), clf data ("*clf_chiptype*") and pgf data ("*pgf_chiptype*") don't match"
+        return (pm=pm,mm=mm)
+    end
+
+    use_meta_probeset_id=false
+    if ! isempty(mps.chip_name)
+        use_meta_probeset_id=true
+        if mps.chip_name != cel_chiptype
+            @error "chiptype of mps data ("*mps.chip_name*") and cel data ("*cel_chiptype*") don't match"
+        end
+    end
+
+    intensities=get_intensities(cel)
+    if isempty(intensities)
         @error "intensity data not found in cel data"
+        return (pm=pm,mm=mm)
+    end
+
+    sequential="1"
+    index=findfirst(clf.header_tags .== "sequential")
+    if index>0
+        sequential=clf.header_values[index]
+    else
+        @error "tag <sequential> not found in clf data"
+    end
+    order="row_major"
+    index=findfirst(clf.header_tags .== "order")
+    if index>0
+        order=clf.header_values[index]
+    else
+        @error "tag <order> not found in clf data"
+    end
+    if sequential != "1" || order != "row_major"
+        @warn "unusual values for tags <sequential>="*sequential*" and/or <order>="*order*", expected values are 1 and row_major"
+    end
+    row_major=true
+    if order != "row_major"
+        row_major=false
+    end
+    cols=-1
+    index=findfirst(clf.header_tags .== "cols")
+    if index>0
+        cols=parse(Int,clf.header_values[index])
+    else
+        @error "tag <cols> not found in clf data"
+        cols=max_y+1
+    end
+    rows=-1
+    index=findfirst(clf.header_tags .== "rows")
+    if index>0
+        rows=parse(Int,clf.header_values[index])
+    else
+        @error "tag <rows> not found in clf data"
+        rows=max_x+1
+    end
+
+    check=true
+    if sequential=="1" && length(clf.coordinates)>10
+        seq=parse(Int,sequential)
+        iter=keys(clf.coordinates)
+        next=iterate(iter)
+        for i = 1:10
+            (probe_id, state) = next
+            x=clf.coordinates[probe_id][1]
+            y=clf.coordinates[probe_id][2]
+            #https://media.affymetrix.com/support/developer/powertools/changelog/file-format-clf.html seems to be wrong here.
+            #The other way round works:
+            if row_major
+                test_probe_id = y * cols + x + seq
+            else
+                test_probe_id = x * rows + y + seq
+            end
+            if parse(Int,probe_id) != test_probe_id
+                check=false
+            end
+            next = iterate(iter, state)
+        end
+    end
+    if ! check
+        @error "sequential/deterministic check failed, double check results is recommended"
+    end
+
+    if use_meta_probeset_id
+        id_list=eachindex(mps.meta)
+    else
+        id_list=eachindex(pgf.probe_ids)
+    end
+    for id in id_list
+        pmIntensities=Vector{Float32}()
+        mmIntensities=Vector{Float32}()
+        if haskey(pm,id) && haskey(mm,id)
+            pmIntensities=pm[id]
+            mmIntensities=mm[id]
+        end
+        if use_meta_probeset_id
+            probe_id_list=Vector{String}()
+            for probeset_id in mps.meta[id]
+                for probe_id in pgf.probe_ids[probeset_id]
+                    push!(probe_id_list,probe_id)
+                end
+            end
+        else
+            probe_id_list=pgf.probe_ids[id]
+        end
+        for probe_id in probe_id_list
+            (x,y)=clf.coordinates[probe_id]
+            if row_major
+                index = y * cols + x + 1
+            else
+                index = x * rows + y + 1
+            end
+            if haskey(pgf.pm,probe_id)
+                push!(pmIntensities,intensities[index])
+            else
+                push!(mmIntensities,intensities[index])
+            end
+        end
+        pm[id]=pmIntensities
+        mm[id]=mmIntensities
+    end
+    return (pm=pm,mm=mm)
+end
+
+function intensities(cel::Cel, cdf::Cdf)
+    pm=Dict{String,Vector{Float32}}()
+    mm=Dict{String,Vector{Float32}}()
+
+    cel_chiptype=AffyCelFiles.get_chiptype(cel)
+    
+    cdf_chiptype=cdf.chip["Name"]
+    if cel_chiptype != cdf_chiptype
+        @error "chiptype of cel data ("*cel_chiptype*") and cdf data ("*cdf_chiptype*") don't match"
+        return (pm=pm,mm=mm)
+    end
+
+    intensities=get_intensities(cel)
+    if isempty(intensities)
+        @error "intensity data not found in cel data"
+        return (pm=pm,mm=mm)
     end
 
     if ! isempty(cdf.definedUnitIndices)
-        for unitIndex in keys(cdf.definedUnitIndices)
+        for unitIndex in eachindex(cdf.definedUnitIndices)
             unit=cdf.units[unitIndex]
             for blocks in unit.blocks
                 for block in blocks
                     id=block.block["Name"]
-                    pmIntensities=Vector{Int}()
-                    mmIntensities=Vector{Int}()
+                    pmIntensities=Vector{Float32}()
+                    mmIntensities=Vector{Float32}()
                     if haskey(pm,id) && haskey(mm,id)
                         pmIntensities=pm[id]
                         mmIntensities=mm[id]
@@ -270,9 +447,9 @@ function intensities(cel::Cel, cdf::Cdf)
                         for cellIndex in eachindex(cells)
                             index=cells[cellIndex]
                             if pms[cellIndex]
-                                push!(pmIntensities,intensity[index+1])
+                                push!(pmIntensities,intensities[index+1])
                             else
-                                push!(mmIntensities,intensity[index+1])
+                                push!(mmIntensities,intensities[index+1])
                             end
                         end
                     end
@@ -284,7 +461,7 @@ function intensities(cel::Cel, cdf::Cdf)
     else
         @error "no valid cdf data"
     end
-    (pm=pm,mm=mm)
+    return (pm=pm,mm=mm)
 end
 
 #parked code for later
@@ -313,7 +490,94 @@ end
 
 
 
+function mps_read(mps_file::AbstractString)
+    mps_file=normpath(mps_file)
+    if isfile(mps_file)
+        new_crc=open(crc32c,mps_file)
+        io=open(mps_file,"r")
+    	mps=mps_read(io,new_crc)
+    	close(io)
+    
+        if length(mps.chip_name)>0 && ! haskey(mpss,mps.chip_name)
+            mpss[mps.chip_name]=mps
+            mpss_files[mps.chip_name]=mps_file
+            mpss_checksums[mps.chip_name]=open(crc32c,mps_file)
+        end
+    else
+        @error "Mps file "*mps_file*" doesn't exist"
+        mps=Mps()
+    end
+    return mps
+end
 
+function mps_read(io::IO, new_crc)::Mps
+	seekstart(io)
+    chip_name=""
+    header_tags=Vector{String}()
+    header_values=Vector{String}()
+    other_ids=Dict{String, NamedTuple}()
+    meta=Dict{String,Vector{String}}()
+    colnames=["probeset_id","transcript_cluster_id","probeset_list","probe_count"]
+    transcript_cluster_id_index=2
+    probeset_list_start=3
+    probeset_list_end=3
+    for line in eachline(io)
+        if startswith(line,"#%")
+            line=strip(line)
+            (tag,value)=split(line,"=")
+            tag=lstrip(tag,['#','%'])
+            push!(header_tags,tag)
+            push!(header_values,value)
+            if tag=="lib_set_name"
+                chip_name=value
+                if haskey(mpss,value)
+                    if new_crc == mpss_checksums[value] 
+                        @info "mps for "*value*" already in cache, source "*mpss_files[value]
+                        return mpss[value]
+                    else
+                        @info "mps for "*value*" already in cache, but source "*mpss_files[value]*" has changed"
+                        delete!(mpss,value)
+                        delete!(mpss_files,value)
+                        delete!(mpss_checksums,value)
+                    end
+                end
+            end
+        else
+            line=strip(line)
+            if startswith(line,"probeset_id")
+                colnames=split(line)
+                probeset_list_start=findfirst("probeset_list".==colnames)
+                probeset_list_end=findfirst("probe_count".==colnames)-1
+                transcript_cluster_id_index=findfirst("transcript_cluster_id".==colnames)
+                if ! (probeset_list_start>0 && probeset_list_end>=probeset_list_start)
+                    @error "probeset_list indices wrong, start="*string(probeset_list_start)*", end="*string(probeset_list_end)
+                    probeset_list_start=3
+                    probeset_list_end=3                
+                end
+            else
+                values=split(line)
+                meta_probeset_id=values[1]
+                if ! isnothing(transcript_cluster_id_index)
+                    transcript_cluster_id=values[transcript_cluster_id_index]
+                else
+                    transcript_cluster_id=""
+                end
+                probeset_list=values[probeset_list_start:probeset_list_end]
+                if haskey(meta,meta_probeset_id)
+                    @error "ambiguous meta probeset_id in mps data"
+                end
+                meta[meta_probeset_id]=probeset_list
+                for probeset_id in probeset_list
+                    if haskey(other_ids,probeset_id)
+                        @error "ambiguous probeset_id in mps data: probeset_id part of multiple meta probesets?"
+                    end
+                    other_ids[probeset_id]=(meta_probeset_id=meta_probeset_id,transcript_cluster_id=transcript_cluster_id)
+                end
+            end
+        end
+    end
+    return Mps(chip_name,header_tags,header_values,other_ids,meta)
+end
 
 function clf_read(clf_file::AbstractString)
     clf_file=normpath(clf_file)
@@ -332,8 +596,7 @@ function clf_read(clf_file::AbstractString)
         @error "Clf file "*clf_file*" doesn't exist"
         clf=Clf()
     end
-
-    clf
+    return clf
 end
 
 function clf_read(io::IO, new_crc)::Clf
@@ -342,7 +605,9 @@ function clf_read(io::IO, new_crc)::Clf
     header_tags=Vector{String}()
     header_values=Vector{String}()
     coordinates=Dict{String,Tuple{Int,Int}}()
-
+    x_first=true
+    max_x=-1
+    max_y=-1
     for line in eachline(io)
         if startswith(line,"#%")
             line=strip(line)
@@ -364,18 +629,36 @@ function clf_read(io::IO, new_crc)::Clf
                     end
                 end
             end
+            if tag=="header0"
+                values=split(value)
+                if values[2]=="y" && values[3]=="x"
+                    x_first=false
+                    @warn "very unusual column order y,x found but expected x,y in clf file"
+                end
+            end
         else
             line=strip(line)
             values=split(line)
             if length(values)==3
-                x=parse(Int,values[2])
-                y=parse(Int,values[3])
+                if x_first
+                    x=parse(Int,values[2])
+                    y=parse(Int,values[3])
+                else
+                    y=parse(Int,values[2])
+                    x=parse(Int,values[3])
+                end
                 coordinates[values[1]]=(x,y)
+                if x>max_x
+                    max_x=x
+                end
+                if y>max_y
+                    max_y=y
+                end
             end
         end
     end
 
-    return Clf(chip_name,header_tags,header_values,coordinates)
+    return Clf(chip_name,header_tags,header_values,coordinates,max_x,max_y)
 end
 
 function pgf_read(pgf_file::AbstractString)
@@ -395,8 +678,7 @@ function pgf_read(pgf_file::AbstractString)
         @error "Pgf file "*pgf_file*" doesn't exist"
         pgf=Pgf()
     end
-
-    pgf
+    return pgf
 end
 
 function pgf_read(io::IO, new_crc)::Pgf
@@ -459,7 +741,6 @@ function pgf_read(io::IO, new_crc)::Pgf
     if ! isempty(cur_probe_ids) && ! isempty(probeset_id)
         probe_ids[probeset_id]=cur_probe_ids
     end
-
     return Pgf(chip_name,header_tags,header_values,probe_ids,pm)
 end
 
@@ -480,8 +761,7 @@ function cdf_read(cdf_file::AbstractString)
         @error "Cdf file "*cdf_file*" doesn't exist"
         cdf=Cdf()
     end
-
-    cdf
+    return cdf
 end
 
 function cdf_read(io::IO, new_crc=0x0)::Cdf
@@ -656,7 +936,7 @@ function cel_read(cel_file::AbstractString)
         @error "Cel file "*cel_file*" doesn't exist"
         cel=Cel()
     end
-	cel
+	return cel
 end
 
 function cel_read(io::IO)::Cel
