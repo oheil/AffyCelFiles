@@ -2,6 +2,8 @@
 read Affymetrix .CEL files
 
 # Examples
+
+```
 using AffyCelFiles
 
 cel_file = "example_(Mouse430_2).CEL"
@@ -41,6 +43,7 @@ intensities = AffyCelFiles.intensities(cel_data, pgf_data, clf_data, mps_data);
 intensities.pm
 
 intensities.mm
+```
 
 
 
