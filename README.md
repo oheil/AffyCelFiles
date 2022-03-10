@@ -44,7 +44,7 @@ affymetrix annotation data is typically just a file of annotations in a table/cs
 
 In this early stage this package doesn't provide a very convenient API, but this may change in future.
 
-# Usage examples
+### Usage examples
 
 ```julia
 using Pkg
