@@ -49,7 +49,7 @@ In this early stage this package doesn't provide a very convenient API, but this
 using Pkg
 Pkg.add("AffyCelFiles");
 #or from github master:
-#Pkg.add(url="https://github.com/oheil/AffyCelFiles",rev="master")
+#Pkg.add(url="https://github.com/oheil/AffyCelFiles.jl",rev="master")
 
 using AffyCelFiles
 ```
