@@ -111,7 +111,7 @@ intensities.mm
 ```
 Result:
 ```julia
-julia> i.pm
+julia> intensities.pm
 Dict{String, Vector{Float32}} with 27189 entries:
   "23050629" => [61.0, 43.0, 54.0, 60.0]
   "23054888" => [321.0, 184.0, 169.0, 297.0, 162.0, 217.0, 194.0, 647.0, 124.0, 192.0]
@@ -119,7 +119,7 @@ Dict{String, Vector{Float32}} with 27189 entries:
   "23056335" => [160.0, 227.0, 951.0, 264.0, 286.0, 52.0, 43.0, 53.0, 48.0, 40.0]
   "23059041" => [1043.0, 867.0, 321.0, 739.0, 826.0, 462.0, 330.0, 1190.0, 1485.0, 1537.0]
 ...
-julia> i.mm
+julia> intensities.mm
 Dict{String, Vector{Float32}} with 27189 entries:
   "23050629" => []
   "23054888" => []
