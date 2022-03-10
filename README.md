@@ -20,7 +20,7 @@ This package is in an early stage and the following microarrays .CEL files are t
 
 (more to come)
 
-The expression/intensity data was cross checked against R/bioconductor affy and oligo package.
+The expression/intensity data was cross checked against R/bioconductor affy and oligo libraries.
 
 ## Dependencies
 
