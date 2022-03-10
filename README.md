@@ -17,8 +17,14 @@ https://media.affymetrix.com/support/developer/powertools/changelog/file-format-
 This package is in an early stage and the following microarrays .CEL files are tested:
 * Clariom_S_Human
 * Mouse430_2
+
 The expression/intensity data is cross checked against R/bioconductor affy and oligo package
 
+## Dependencies
+
+#### Julia versions
+
+* Julia 1.0 or above
 
 # Examples
 
