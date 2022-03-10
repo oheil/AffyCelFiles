@@ -18,13 +18,27 @@ This package is in an early stage and the following microarrays .CEL files are t
 * Clariom_S_Human
 * Mouse430_2
 
-The expression/intensity data is cross checked against R/bioconductor affy and oligo package
+The expression/intensity data is cross checked against R/bioconductor affy and oligo package.
 
 ## Dependencies
 
 #### Julia versions
 
 * Julia 1.0 or above
+
+## Usage
+
+In general Affymetrix .CEL can always be read in. To read Affymetrix .CEL files with meaningful information you need one of the following additional file/files:
+* .cdf
+* .pgf + .clf (+ optional .mps)
+
+Those files provide the mapping from a probe location on the chip to a probe_id and the mapping from probeset_ids to probe_ids. For a specific chip type you
+can get those files from the ThermoFisher support page, e.g. for the Clariom S human see https://www.thermofisher.com/order/catalog/product/902927?SID=srch-srp-902927
+for download of file TFS-Assets_LSG_Support-Files_Clariom_S_Human_Analysis-r1.zip (you need to have a login).
+
+
+
+
 
 # Examples
 
