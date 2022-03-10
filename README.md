@@ -17,9 +17,10 @@ https://media.affymetrix.com/support/developer/powertools/changelog/file-format-
 This package is in an early stage and the following microarrays .CEL files are tested:
 * Clariom_S_Human
 * Mouse430_2
-*   (more to come)
 
-The expression/intensity data is cross checked against R/bioconductor affy and oligo package.
+(more to come)
+
+The expression/intensity data was cross checked against R/bioconductor affy and oligo package.
 
 ## Dependencies
 
@@ -63,6 +64,8 @@ cdf_data = AffyCelFiles.cdf_read(cdf_file);
 
 intensities = AffyCelFiles.intensities(cel_data,cdf_data);
 
+#Dict mapping probeset_id to lists of expression values (pm=perfect match, mm=mismatch).
+#Depending on the chiptype mm can be empty
 intensities.pm
 intensities.mm
 ```
@@ -77,9 +80,13 @@ pgf_data = AffyCelFiles.pgf_read(pgf_file);
 clf_data = AffyCelFiles.clf_read(clf_file);
 
 intensities = AffyCelFiles.intensities(cel_data, pgf_data, clf_data);
+
+#Dict mapping probeset_id to lists of expression values (pm=perfect match, mm=mismatch).
+#Depending on the chiptype mm can be empty
 intensities.pm
 intensities.mm
 ```
+Providing a .mps file changes the central ids from probeset_ids to meta_probeset_ids/transcript_ids.
 Reading .CEL files with corresponding .pgf, .clf files (you need both) and optional a .mps file:
 ```julia
 cel_file = "example_(Clariom_S_Human).CEL"
@@ -93,6 +100,9 @@ clf_data = AffyCelFiles.clf_read(clf_file);
 mps_data = AffyCelFiles.mps_read(mps_file);
 
 intensities = AffyCelFiles.intensities(cel_data, pgf_data, clf_data, mps_data);
+
+#Dict mapping meta_probeset_id/transcript_id to lists of expression values (pm=perfect match, mm=mismatch).
+#Depending on the chiptype mm can be empty
 intensities.pm
 intensities.mm
 ```
