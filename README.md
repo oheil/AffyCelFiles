@@ -1,5 +1,24 @@
 # AffyCelFiles
-read Affymetrix .CEL files
+
+This is a low level IO package for Affymetrix .CEL files
+
+**References**
+
+https://media.affymetrix.com/support/developer/powertools/changelog/file-formats.html
+https://media.affymetrix.com/support/developer/powertools/changelog/gcos-agcc/cel.html
+https://media.affymetrix.com/support/developer/powertools/changelog/gcos-agcc/generic.html
+https://media.affymetrix.com/support/developer/powertools/changelog/gcos-agcc/cdf.html
+https://media.affymetrix.com/support/developer/powertools/changelog/file-format-pgf.html
+https://media.affymetrix.com/support/developer/powertools/changelog/file-format-clf.html
+https://media.affymetrix.com/support/developer/powertools/changelog/file-format-mps.html
+
+## Currently supported microarrays
+
+This package is in an early stage and the following microarrays .CEL files are tested:
+* Clariom_S_Human
+* Mouse430_2
+The expression/intensity data is cross checked against R/bioconductor affy and oligo package
+
 
 # Examples
 

@@ -70,7 +70,7 @@ struct DataGroup
     end
 end
 
-#http://media.affymetrix.com/support/developer/powertools/changelog/gcos-agcc/cel.html
+#https://media.affymetrix.com/support/developer/powertools/changelog/gcos-agcc/cel.html
 
 struct Cel
     isDefined::Bool
