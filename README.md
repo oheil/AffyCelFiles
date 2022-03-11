@@ -18,6 +18,7 @@ This package is in an early stage and the following microarrays .CEL files are t
 * Clariom_S_Human
 * Mouse430_2
 * HG-U133_Plus_2
+* HuGene-2_0-st
 
 (more to come)
 
