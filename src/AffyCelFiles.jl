@@ -217,14 +217,14 @@ struct Mps
     chip_name::String
     header_tags::Vector{String}
     header_values::Vector{String}
-    other_ids::Dict{String,NamedTuple}        # probeset_id (from probeset_list) => (meta_probeset_id,transcript_cluster_id)
-    meta::Dict{String,Vector{String}}         # meta_probeset_id => list of probeset_id's
+    other_ids::Dict{String,Vector{NamedTuple}} # probeset_id (from probeset_list) => (meta_probeset_id1,transcript_cluster_id1),(meta_probeset_id2,transcript_cluster_id2),...
+    meta::Dict{String,Vector{String}}          # meta_probeset_id => list of probeset_id's
     function Mps()
         new(
             "",
             Vector{String}(),
             Vector{String}(),
-            Dict{String,NamedTuple}(),
+            Dict{String,Vector{NamedTuple}}(),
             Dict{String,Vector{String}}()
             )
     end
@@ -515,12 +515,12 @@ function mps_read(io::IO, new_crc)::Mps
     chip_name=""
     header_tags=Vector{String}()
     header_values=Vector{String}()
-    other_ids=Dict{String, NamedTuple}()
+    other_ids=Dict{String, Vector{NamedTuple}}()
     meta=Dict{String,Vector{String}}()
     colnames=["probeset_id","transcript_cluster_id","probeset_list","probe_count"]
     transcript_cluster_id_index=2
-    probeset_list_start=3
-    probeset_list_end=3
+    probeset_list_start=2   #2 tags before probeset_list
+    probeset_list_end=1     #1 tag after probeset_list
     for line in eachline(io)
         if startswith(line,"#%")
             line=strip(line)
@@ -546,13 +546,13 @@ function mps_read(io::IO, new_crc)::Mps
             line=strip(line)
             if startswith(line,"probeset_id")
                 colnames=split(line)
-                probeset_list_start=findfirst("probeset_list".==colnames)
-                probeset_list_end=findfirst("probe_count".==colnames)-1
+                probeset_list_start=findfirst("probeset_list".==colnames)-1
+                probeset_list_end=length(colnames)-findfirst("probeset_list".==colnames)
                 transcript_cluster_id_index=findfirst("transcript_cluster_id".==colnames)
-                if ! (probeset_list_start>0 && probeset_list_end>=probeset_list_start)
-                    @error "probeset_list indices wrong, start="*string(probeset_list_start)*", end="*string(probeset_list_end)
-                    probeset_list_start=3
-                    probeset_list_end=3                
+                if ! (probeset_list_start>0 && probeset_list_end>0)
+                    @error "probeset_list indices wrong, tags before="*string(probeset_list_start)*", tags after="*string(probeset_list_end)
+                    probeset_list_start=2
+                    probeset_list_end=1
                 end
             else
                 values=split(line)
@@ -562,16 +562,20 @@ function mps_read(io::IO, new_crc)::Mps
                 else
                     transcript_cluster_id=""
                 end
-                probeset_list=values[probeset_list_start:probeset_list_end]
+                probeset_list=values[(probeset_list_start+1):(length(values)-probeset_list_end)]
                 if haskey(meta,meta_probeset_id)
                     @error "ambiguous meta probeset_id in mps data"
                 end
                 meta[meta_probeset_id]=probeset_list
                 for probeset_id in probeset_list
                     if haskey(other_ids,probeset_id)
-                        @error "ambiguous probeset_id in mps data: probeset_id part of multiple meta probesets?"
+                        #@error "ambiguous probeset_id in mps data: probeset_id part "*probeset_id*" of multiple meta probesets?"
+                        other=other_ids[probeset_id]
+                    else
+                        other=Vector{NamedTuple}()
                     end
-                    other_ids[probeset_id]=(meta_probeset_id=meta_probeset_id,transcript_cluster_id=transcript_cluster_id)
+                    push!(other,(meta_probeset_id=meta_probeset_id,transcript_cluster_id=transcript_cluster_id))
+                    other_ids[probeset_id]=other
                 end
             end
         end
