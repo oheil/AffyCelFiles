@@ -105,7 +105,7 @@ Reading .CEL files with corresponding .pgf and .clf files (you need both):
 ```julia
 cel_file = "example_(Clariom_S_Human).CEL"
 pgf_file = raw"d:\Temp\clariomShuman\TFS-Assets_LSG_Support-Files_Clariom_S_Human_Analysis-r1\Clariom_S_Human.r1.pgf"
-clf_file  =raw"d:\Temp\clariomShuman\TFS-Assets_LSG_Support-Files_Clariom_S_Human_Analysis-r1\Clariom_S_Human.r1.clf"
+clf_file = raw"d:\Temp\clariomShuman\TFS-Assets_LSG_Support-Files_Clariom_S_Human_Analysis-r1\Clariom_S_Human.r1.clf"
 
 cel_data = AffyCelFiles.cel_read(cel_file);
 pgf_data = AffyCelFiles.pgf_read(pgf_file);
@@ -140,7 +140,7 @@ Reading .CEL files with corresponding .pgf, .clf files (you need both) and optio
 ```julia
 cel_file = "example_(Clariom_S_Human).CEL"
 pgf_file = raw"d:\Temp\clariomShuman\TFS-Assets_LSG_Support-Files_Clariom_S_Human_Analysis-r1\Clariom_S_Human.r1.pgf"
-clf_file  =raw"d:\Temp\clariomShuman\TFS-Assets_LSG_Support-Files_Clariom_S_Human_Analysis-r1\Clariom_S_Human.r1.clf"
+clf_file = raw"d:\Temp\clariomShuman\TFS-Assets_LSG_Support-Files_Clariom_S_Human_Analysis-r1\Clariom_S_Human.r1.clf"
 mps_file = raw"d:\Temp\clariomShuman\TFS-Assets_LSG_Support-Files_Clariom_S_Human_Analysis-r1\Clariom_S_Human.r1.mps"
 
 cel_data = AffyCelFiles.cel_read(cel_file);
