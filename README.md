@@ -27,7 +27,14 @@ The expression/intensity data was cross checked against R/bioconductor affy and 
 #### Julia versions
 
 * Julia 1.0 or above
-* CRC32c (Standard library)
+
+#### Third party packages
+
+* none
+
+#### Standard Library packages
+
+* CRC32c
 
 ## Usage
 
